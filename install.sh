@@ -46,6 +46,7 @@ provider_module="$runtime_root/dist/providers/openai-compatible-responses.js"
 protocol_module="$runtime_root/dist/protocols/open-responses.js"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 agent_home="$config_home/agents"
+cli_config="$config_home/cli.json"
 secret_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sage"
 secret_file="$secret_dir/qwen38-api-key"
 backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/sage-opencode/backups/$(date '+%Y%m%d-%H%M%S')-$$"
@@ -157,16 +158,17 @@ fi
 mkdir -p "$config_home" "$agent_home"
 backup_if_present "$config_home/opencode.jsonc"
 backup_if_present "$agent_home/sage-qwen.md"
+backup_if_present "$cli_config"
 
 # Merge the provider into any existing JSON/JSONC configuration. Other values
 # are retained. The original file (including comments and formatting) is kept
 # in the timestamped backup because the merged file is normalized as JSON.
 node --input-type=module - \
-  "$config_home/opencode.jsonc" "$provider_module" "$secret_file" <<'NODE'
+  "$config_home/opencode.jsonc" "$provider_module" "$secret_file" "$cli_config" <<'NODE'
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [target, providerPath, secretPath] = process.argv.slice(2);
+const [target, providerPath, secretPath, cliTarget] = process.argv.slice(2);
 
 function stripJSONC(source) {
   let out = "";
@@ -255,12 +257,32 @@ config.providers["sage-qwen38"] = {
       limit: { context: 262144, output: 32768 },
       settings: { reasoningEffort: "xhigh" },
       variants: [
+        { id: "low", settings: { reasoningEffort: "low" } },
+        { id: "medium", settings: { reasoningEffort: "medium" } },
         { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
       ],
     },
   },
 };
 fs.writeFileSync(target, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+
+let cli = {};
+if (fs.existsSync(cliTarget) && fs.statSync(cliTarget).size > 0) {
+  cli = JSON.parse(stripJSONC(fs.readFileSync(cliTarget, "utf8")));
+  if (!cli || Array.isArray(cli) || typeof cli !== "object") {
+    throw new Error("Existing OpenCode CLI config must be a JSON object");
+  }
+}
+cli.$schema ??= "https://opencode.ai/v2/cli.json";
+cli.keybinds ??= {};
+if (!cli.keybinds || Array.isArray(cli.keybinds) || typeof cli.keybinds !== "object") {
+  throw new Error("Existing OpenCode CLI keybinds setting must be an object");
+}
+// Shift+Tab normally cycles agents in OpenCode V2. For this course profile it
+// cycles low/medium/xhigh reasoning instead; Ctrl+T keeps agent cycling handy.
+cli.keybinds["variant.cycle"] = "shift+tab";
+cli.keybinds["agent.cycle"] = "ctrl+t";
+fs.writeFileSync(cliTarget, `${JSON.stringify(cli, null, 2)}\n`, { mode: 0o600 });
 NODE
 
 cat > "$agent_home/sage-qwen.md" <<'EOF'
@@ -270,12 +292,12 @@ mode: primary
 model: sage-qwen38/Qwen/Qwen3.8-27B#xhigh
 ---
 
-Own the requested work end to end. Inspect nearby source before guessing, use
-tools directly, preserve unrelated changes, and run bounded relevant checks.
-Keep progress clear and return a concise account of the result, validation,
-and any material remaining uncertainty.
+You are a coding agent. Follow repository instructions and inspect relevant
+files before editing. Use tools directly, preserve unrelated changes, and run
+relevant tests. Answer concisely with the changes, validation, and any material
+limitations.
 EOF
-chmod 0600 "$config_home/opencode.jsonc"
+chmod 0600 "$config_home/opencode.jsonc" "$cli_config"
 chmod 0644 "$agent_home/sage-qwen.md"
 
 agent_check() {

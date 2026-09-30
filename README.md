@@ -5,7 +5,7 @@
 
 > 服务地址：`https://openai.sage.org.ai/v1`  
 > 上下文窗口：`262144`  
-> 推理强度：`xhigh`  
+> 推理强度：`low` / `medium` / `xhigh`（默认 `xhigh`）
 > 验证版本：OpenCode V2 `2.0.20`（2026-09-30）
 
 仓库**不包含任何 API Key**。请使用课题组单独发给你的个人 Key，不要互相
@@ -47,7 +47,7 @@ cd sage-qwen-opencode
 1. 在用户目录 `~/.local` 安装固定版本的 OpenCode V2；
 2. 配置 SAGE Responses provider；
 3. 创建 `sage-qwen` 主 Agent，并将它与 SAGE 模型设为新会话默认项；
-4. 设置 `xhigh` 推理强度和 `262144` 上下文窗口；
+4. 配置三档推理强度、默认 `xhigh` 和 `262144` 上下文窗口；
 5. 把个人 API Key 保存为权限 `0600` 的独立文件；
 6. 应用当前 SAGE 工具调用所需的窄兼容修正；
 7. 保留原有 OpenCode 配置，并在修改前创建备份。
@@ -75,6 +75,22 @@ opencode run --agent sage-qwen \
   "请阅读当前项目并说明目录结构"
 ```
 
+## 切换推理档位
+
+在 OpenCode 交互界面中按 **Shift+Tab**，可以依次切换：
+
+```text
+low → medium → xhigh
+```
+
+- `low`：简单问答、小修改，响应更快；
+- `medium`：一般代码阅读和开发任务；
+- `xhigh`：宽搜索、复杂排障和测试任务，安装后的默认档位。
+
+OpenCode V2 原本把 Shift+Tab 用于切换 Agent；安装脚本会把它改成推理档位
+切换，并把 Agent 循环切换移到 **Ctrl+T**。也可以按 **Ctrl+X**，再按 **A**
+打开 Agent 列表。
+
 ## 验证工具调用
 
 在一个无关紧要的目录中运行：
@@ -94,6 +110,7 @@ OpenCode 工具调用闭环均已正常工作。
 ~/.config/sage/qwen38-api-key
 ~/.config/opencode/opencode.jsonc
 ~/.config/opencode/agents/sage-qwen.md
+~/.config/opencode/cli.json
 ```
 
 密钥文件仅允许当前用户读写。OpenCode 配置中只有密钥文件的路径，不含密钥

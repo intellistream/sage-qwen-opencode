@@ -22,6 +22,11 @@ cat > "$fake_home/.config/opencode/opencode.jsonc" <<'EOF'
   },
 }
 EOF
+cat > "$fake_home/.config/opencode/cli.json" <<'EOF'
+{
+  "theme": { "mode": "dark" }
+}
+EOF
 
 cat > "$fake_bin/npm" <<'EOF'
 #!/usr/bin/env bash
@@ -85,8 +90,24 @@ if (sage.models?.["Qwen/Qwen3.8-27B"]?.limit?.context !== 262144) {
 if (sage.models?.["Qwen/Qwen3.8-27B"]?.settings?.reasoningEffort !== "xhigh") {
   throw new Error("reasoning effort is wrong");
 }
+const variants = sage.models?.["Qwen/Qwen3.8-27B"]?.variants ?? [];
+if (JSON.stringify(variants.map((v) => v.id)) !== JSON.stringify(["low", "medium", "xhigh"])) {
+  throw new Error(`reasoning variants are wrong: ${JSON.stringify(variants)}`);
+}
 if (!sage.settings?.apiKey?.includes("qwen38-api-key")) {
   throw new Error("secret file reference is missing");
+}
+NODE
+
+node --input-type=module - "$fake_home/.config/opencode/cli.json" <<'NODE'
+import fs from "node:fs";
+const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (config.theme?.mode !== "dark") throw new Error("existing CLI setting was lost");
+if (config.keybinds?.["variant.cycle"] !== "shift+tab") {
+  throw new Error("Shift+Tab variant binding is missing");
+}
+if (config.keybinds?.["agent.cycle"] !== "ctrl+t") {
+  throw new Error("replacement agent-cycle binding is missing");
 }
 NODE
 

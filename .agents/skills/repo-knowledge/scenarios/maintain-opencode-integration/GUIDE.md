@@ -13,7 +13,9 @@ SAGE model settings, or compatibility patch in `install.sh`.
   V2 stores the session model separately from the primary agent, installation
   sets both `default_agent` and the root `model` for new sessions. Reasoning
   effort is set to `xhigh` at model level; the named variant remains available
-  for explicit CLI selection. Users can still switch either choice.
+  for explicit CLI selection. The model exposes `low`, `medium`, and `xhigh`;
+  `cli.json` maps Shift+Tab to `variant.cycle` and moves agent cycling to
+  Ctrl+T. Users can still switch either choice.
 - Existing OpenCode configuration values must survive installation. Preserve a
   timestamped copy before normalizing JSONC to JSON and merging our provider.
 
