@@ -79,9 +79,16 @@ user instances are exhausted. This has been observed upstream even when the
 process file-descriptor limit itself is not the binding resource. Do not mutate
 host-wide `sysctl` values from this user installer. The managed `opencode` and
 `opencode2` launchers set the upstream-supported
-`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1` on Linux while preserving an
-explicit value supplied by an administrator. Reinstalling must remove only our
-marked wrapper before npm recreates its executable links, then recreate the
-wrapper after installation.
+`OPENCODE_FILEWATCHER_DISABLE=1` on Linux while preserving either implemented
+variable when explicitly supplied by an administrator. In the exact V2.0.20
+source, `packages/cli/src/server-process.ts` maps this variable (falling back to
+`OPENCODE_DISABLE_FILEWATCHER`) to `fs.filewatcher: false`, and
+`packages/server/src/routes.ts` maps that option to
+`Watcher.configured({ enabled: false })`. The similarly named
+`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER` appears in that tag's documentation
+but is not consumed by its CLI source; do not use it for this pinned version.
+Reinstalling must remove only our marked wrapper before npm recreates its
+executable links, recreate the wrapper, verify it with
+`--sage-opencode-doctor`, and stop any old watcher-enabled background service.
 
 Keep captured output bounded and never record the real key or request headers.

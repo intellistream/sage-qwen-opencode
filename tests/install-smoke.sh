@@ -27,6 +27,15 @@ cat > "$fake_home/.config/opencode/cli.json" <<'EOF'
   "theme": { "mode": "dark" }
 }
 EOF
+cat > "$fake_home/.bashrc" <<'EOF'
+export KEEP_THIS_SETTING=yes
+# >>> sage-opencode path
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+# <<< sage-opencode path
+EOF
 
 cat > "$fake_bin/npm" <<'EOF'
 #!/usr/bin/env bash
@@ -50,7 +59,7 @@ cat > "$cli" <<'OPENCODE'
 if [[ "${1:-}" == --version ]]; then
   printf '%s\n' 'opencode v2.0.20 fixture'
 elif [[ "${1:-}" == --watcher-env ]]; then
-  printf '%s\n' "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"
+  printf '%s\n' "${OPENCODE_FILEWATCHER_DISABLE:-${OPENCODE_DISABLE_FILEWATCHER:-unset}}"
 else
   printf '%s\n' 'OpenCode fixture'
 fi
@@ -173,13 +182,18 @@ protocol="$prefix/lib/node_modules/@opencode/ai/dist/protocols/open-responses.js
 [[ "$(grep -Fc 'namespace: Schema.optional(Schema.NullOr(Schema.String)),' "$protocol")" -eq 2 ]]
 [[ "$(grep -Fc 'namespace: item.namespace ?? undefined,' "$protocol")" -eq 4 ]]
 [[ "$(grep -Fc '# >>> sage-opencode path' "$fake_home/.bashrc")" -eq 1 ]]
+grep -Fq 'case "$PATH:" in' "$fake_home/.bashrc"
+grep -Fq 'export KEEP_THIS_SETTING=yes' "$fake_home/.bashrc"
 [[ "$(stat -f '%Lp' "$fake_home/.config/sage/qwen38-api-key" 2>/dev/null || stat -c '%a' "$fake_home/.config/sage/qwen38-api-key")" == 600 ]]
 [[ -x "$prefix/opt/$node_base/bin/node" ]]
 [[ -L "$prefix/bin/node" ]]
 [[ -f "$prefix/bin/opencode" && ! -L "$prefix/bin/opencode" ]]
 grep -Fq '# sage-opencode Linux launcher' "$prefix/bin/opencode"
-grep -Fq 'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER' "$prefix/bin/opencode"
-[[ "$(env -u OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == 1 ]]
-[[ "$(OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false "$prefix/bin/opencode" --watcher-env)" == false ]]
+grep -Fq 'OPENCODE_FILEWATCHER_DISABLE' "$prefix/bin/opencode"
+[[ "$(env -u OPENCODE_FILEWATCHER_DISABLE -u OPENCODE_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == 1 ]]
+[[ "$(OPENCODE_FILEWATCHER_DISABLE=false "$prefix/bin/opencode" --watcher-env)" == false ]]
+[[ "$(OPENCODE_DISABLE_FILEWATCHER=true "$prefix/bin/opencode" --watcher-env)" == true ]]
+doctor_output="$("$prefix/bin/opencode" --sage-opencode-doctor)"
+grep -Fqx 'filewatcher_disable=1' <<<"$doctor_output"
 
 printf '%s\n' 'install smoke test (including Node bootstrap): PASS'

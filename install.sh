@@ -156,6 +156,7 @@ install_node() {
 if ! node_is_usable; then
   install_node
 fi
+export PATH="$install_prefix/bin:$PATH"
 
 runtime_root="$install_prefix/lib/node_modules/@opencode/ai"
 provider_module="$runtime_root/dist/providers/openai-compatible-responses.js"
@@ -197,9 +198,10 @@ npm install --global --prefix "$install_prefix" \
 }
 
 # OpenCode's Linux file watcher can exhaust inotify instances and crash with
-# EMFILE on shared servers. Use the upstream-supported opt-out in a launcher
-# rather than mutating host-wide sysctl settings. An explicit environment value
-# still wins, so administrators can re-enable watching after raising limits.
+# EMFILE on shared servers. OpenCode V2 2.0.20 reads
+# OPENCODE_FILEWATCHER_DISABLE (and the legacy OPENCODE_DISABLE_FILEWATCHER),
+# despite its bundled documentation naming a different experimental variable.
+# Use the implemented opt-out rather than mutating host-wide sysctl settings.
 disable_filewatcher="${SAGE_OPENCODE_DISABLE_FILEWATCHER:-auto}"
 if [[ "$disable_filewatcher" == auto ]]; then
   [[ "$os_name" == Linux ]] && disable_filewatcher=1 || disable_filewatcher=0
@@ -215,11 +217,26 @@ if [[ "$disable_filewatcher" == 1 ]]; then
     {
       printf '#!/usr/bin/env bash\n'
       printf '# sage-opencode Linux launcher\n'
-      printf 'export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER="${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-1}"\n'
+      printf 'if [[ -z "${OPENCODE_FILEWATCHER_DISABLE+x}" && -z "${OPENCODE_DISABLE_FILEWATCHER+x}" ]]; then\n'
+      printf '  export OPENCODE_FILEWATCHER_DISABLE=1\n'
+      printf 'fi\n'
+      printf 'if [[ "${1:-}" == "--sage-opencode-doctor" ]]; then\n'
+      printf '  printf "launcher=%%s\\n" "$0"\n'
+      printf '  printf "filewatcher_disable=%%s\\n" "${OPENCODE_FILEWATCHER_DISABLE:-${OPENCODE_DISABLE_FILEWATCHER:-unset}}"\n'
+      printf '  exec %q --version\n' "$cli_binary"
+      printf 'fi\n'
       printf 'exec %q "$@"\n' "$cli_binary"
     } > "$launcher_path"
     chmod 0755 "$launcher_path"
   done
+  launcher_diagnosis="$($install_prefix/bin/opencode --sage-opencode-doctor)"
+  grep -Fqx 'filewatcher_disable=1' <<<"$launcher_diagnosis" || {
+    printf 'The Linux launcher did not disable OpenCode file watching.\n' >&2
+    exit 1
+  }
+  # Do not leave a previously spawned watcher-enabled service alive. The next
+  # OpenCode invocation starts a clean service through the corrected launcher.
+  "$install_prefix/bin/opencode" service stop >/dev/null 2>&1 || true
 fi
 
 # The SAGE endpoint currently emits namespace:null for Responses function-call
@@ -299,18 +316,26 @@ case "${SHELL##*/}" in
 esac
 path_start="# >>> sage-opencode path"
 path_end="# <<< sage-opencode path"
-if ! grep -Fq "$path_start" "$shell_rc" 2>/dev/null; then
+shell_tmp="$(mktemp "${TMPDIR:-/tmp}/sage-shellrc.XXXXXX")"
+awk -v start="$path_start" -v end="$path_end" '
+  $0 == start { managed = 1; next }
+  $0 == end { managed = 0; next }
+  !managed { print }
+' "$shell_rc" 2>/dev/null > "$shell_tmp" || true
+{
+  [[ ! -s "$shell_tmp" ]] || printf '\n'
+  printf '%s\n' "$path_start"
+  printf 'case "$PATH:" in\n'
+  printf '  "$HOME/.local/bin:"*) ;;\n'
+  printf '  *) export PATH="$HOME/.local/bin:$PATH" ;;\n'
+  printf 'esac\n'
+  printf '%s\n' "$path_end"
+} >> "$shell_tmp"
+if ! cmp -s "$shell_tmp" "$shell_rc" 2>/dev/null; then
   backup_if_present "$shell_rc"
-  {
-    [[ ! -s "$shell_rc" ]] || printf '\n'
-    printf '%s\n' "$path_start"
-    printf 'case ":$PATH:" in\n'
-    printf '  *":$HOME/.local/bin:"*) ;;\n'
-    printf '  *) export PATH="$HOME/.local/bin:$PATH" ;;\n'
-    printf 'esac\n'
-    printf '%s\n' "$path_end"
-  } >> "$shell_rc"
+  cat "$shell_tmp" > "$shell_rc"
 fi
+rm -f -- "$shell_tmp"
 
 mkdir -p "$config_home" "$agent_home"
 backup_if_present "$config_home/opencode.jsonc"
@@ -485,6 +510,9 @@ Installation complete.
 
 Open a new terminal, then run:
   opencode
+
+Or use the managed launcher immediately in this terminal:
+  $install_prefix/bin/opencode
 
 New sessions default to the "sage-qwen" agent and SAGE Qwen model.
 

@@ -14,7 +14,8 @@ IntelliStream SAGE Qwen service.
   installation with `node` and `npm` absent from the initial executable path.
 - Keep Linux's OpenCode launcher wrapper idempotent. It disables the upstream
   file watcher by default to avoid EMFILE crashes on shared hosts, but must
-  preserve an explicit administrator-provided OpenCode environment value.
+  use the environment variable actually read by the pinned V2 source, preserve
+  an explicit administrator-provided value, and expose a bounded doctor check.
 - Compatibility patches must be narrow and fail closed when upstream source no
   longer matches the verified shape.
 - Run `tests/install-smoke.sh` before committing installer changes.

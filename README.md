@@ -49,6 +49,8 @@ Linux 共享服务器上，安装器还会通过 OpenCode 官方环境开关停�
 读写和工具调用不受影响，但外部程序改动文件时不再产生实时 watcher 事件。
 
 若当前终端还找不到 `opencode`，关闭并重新打开终端即可。
+也可以不等待，直接运行 `~/.local/bin/opencode`。当系统中还装有另一份
+OpenCode 时，请用下面的诊断命令确认命中的是本安装器管理的启动器。
 
 ## 开始使用
 
@@ -158,12 +160,27 @@ git pull
 ./install.sh
 ```
 
-新版会在 Linux 启动器中设置
-`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1`，不需要修改整台服务器的
-`sysctl`。若管理员已经提高 inotify 限额，希望恢复实时文件监视，可运行：
+新版会在 Linux 启动器中设置 OpenCode V2 `2.0.20` 实际读取的
+`OPENCODE_FILEWATCHER_DISABLE=1`，并停止可能仍在运行的旧后台服务，不需要修改
+整台服务器的 `sysctl`。安装后可检查：
 
 ```bash
-OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false opencode
+opencode --sage-opencode-doctor
+```
+
+输出中的 `launcher` 应指向当前用户的 `.local/bin/opencode`，并包含
+`filewatcher_disable=1`。若普通的 `opencode` 仍命中其他安装，可先使用绝对
+路径：
+
+```bash
+~/.local/bin/opencode --sage-opencode-doctor
+~/.local/bin/opencode
+```
+
+若管理员已经提高 inotify 限额，希望恢复实时文件监视，可运行：
+
+```bash
+OPENCODE_FILEWATCHER_DISABLE=false opencode
 ```
 
 ### npm 提示没有权限
