@@ -255,6 +255,8 @@ if [[ "$disable_filewatcher" == 1 ]]; then
     {
       printf '#!/usr/bin/env bash\n'
       printf '# sage-opencode Linux launcher\n'
+      printf '# Keep the pinned V1 schema separate from OpenCode V2 history.\n'
+      printf 'export OPENCODE_DB="${OPENCODE_DB:-sage-opencode-1.db}"\n'
       printf '# Raise only this process tree; never exceed the administrator-set hard limit.\n'
       printf 'soft_limit="$(ulimit -Sn 2>/dev/null || printf 0)"\n'
       printf 'hard_limit="$(ulimit -Hn 2>/dev/null || printf 0)"\n'
@@ -268,6 +270,7 @@ if [[ "$disable_filewatcher" == 1 ]]; then
       printf 'fi\n'
       printf 'if [[ "${1:-}" == "--sage-opencode-doctor" ]]; then\n'
       printf '  printf "launcher=%%s\\n" "$0"\n'
+      printf '  printf "database=%%s\\n" "$OPENCODE_DB"\n'
       printf '  printf "filewatcher_disable=%%s\\n" "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"\n'
       printf '  printf "tui_config_watcher=absent-in-opencode-1.18.33\\n"\n'
       printf '  printf "open_files_soft_limit=%%s\\n" "$(ulimit -Sn 2>/dev/null || printf unknown)"\n'

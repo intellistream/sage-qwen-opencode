@@ -88,3 +88,28 @@ marked wrappers before npm recreates executable links, then recreates and
 checks the wrapper.
 
 Keep captured output bounded and never record the real key or request headers.
+
+## Blank TUI after a V2 installation
+
+Observed on 2026-09-30: the pinned 1.18.33 TUI issued terminal capability
+queries but never displayed its input box. A bounded `opencode run` exposed
+`Database is not empty and has no session table`. Read-only SQLite inspection
+found `session_v2` and no `session` in the default `opencode.db`; an older
+2.0.20 background service still had that database open. Using a separate
+database made the TUI render its SAGE input box. This was a schema mismatch,
+not an API-key or file-watcher failure.
+
+The managed Linux launcher now defaults `OPENCODE_DB` to
+`sage-opencode-1.db` (relative to OpenCode's data directory), preserving an
+explicit nonempty caller override. Never delete, rename, or migrate the old
+database to repair this case; keep its history and any old service untouched.
+Existing V1 users can explicitly select their compatible original database.
+Doctor exposes the selected database name. This separation currently applies
+to the managed Linux launcher, not the unwrapped macOS binary.
+
+For a blank TUI, compare a bounded CLI run with a PTY startup; `--version` and
+`debug startup` alone did not expose this failure. Give the PTY a real window
+size and controlling terminal; wrapping a PTY child in `timeout`/`strace` can
+otherwise introduce SIGTTOU stops unrelated to the application. Capture output
+to a private artifact and check for the input placeholder and model label,
+rather than flooding context with ANSI redraws.

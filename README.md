@@ -11,6 +11,8 @@
 仓库**不包含任何 API Key**。请使用课题组单独发给你的个人 Key，不要互相
 转发，也不要把 Key 提交到 Git、粘贴到群聊或写进项目文件。
 
+第一次使用？请从 **[同学中文使用指南](GUIDE.md)** 开始：安装、首次验证、交互使用与排障。
+
 ## 支持的系统
 
 - macOS；
@@ -168,6 +170,15 @@ tui_config_watcher=absent-in-opencode-1.18.33
 `opencode` 仍命中另一份旧安装，请使用 `~/.local/bin/opencode`，并把
 `command -v opencode` 和上述 doctor 输出发给助教。
 
+### TUI 空白或数据库表不兼容
+
+之前运行过 OpenCode V2，且 TUI 空白或提示
+`Database is not empty and has no session table` 时，请重新运行 `./install.sh`。
+Linux 启动器现在为固定的 V1 版本使用独立的 `sage-opencode-1.db`，位于
+OpenCode 数据目录（通常为 `~/.local/share/opencode`）。原数据库与历史会话
+不会删除或迁移，但不会显示在新的数据库中。已有兼容的 V1 数据库时，
+可通过 `OPENCODE_DB` 显式指定它，启动器会保留此设置。
+
 ### npm 提示没有权限
 
 脚本安装到用户目录，正常情况下不需要管理员权限。不要加 `sudo`。若仍失败，
@@ -186,10 +197,11 @@ tui_config_watcher=absent-in-opencode-1.18.33
 ```bash
 command -v opencode
 opencode --version
-opencode --sage-opencode-doctor
 opencode debug paths
 ls -l ~/.config/sage/qwen38-api-key
 ```
+
+Linux 用户还可运行 `~/.local/bin/opencode --sage-opencode-doctor`。
 
 请勿运行或发送 `cat ~/.config/sage/qwen38-api-key` 的输出。
 

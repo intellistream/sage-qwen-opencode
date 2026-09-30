@@ -53,6 +53,8 @@ if [[ "${1:-}" == --version ]]; then
   printf '%s\n' '1.18.33 fixture'
 elif [[ "${1:-}" == --watcher-env ]]; then
   printf '%s\n' "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"
+elif [[ "${1:-}" == --database-env ]]; then
+  printf '%s\n' "${OPENCODE_DB:-unset}"
 else
   printf '%s\n' 'OpenCode fixture'
 fi
@@ -180,7 +182,7 @@ grep -Fq 'type: "message", status: "completed"' "$adapter"
 [[ "$(grep -Fc '# >>> sage-opencode path' "$fake_home/.bashrc")" -eq 1 ]]
 grep -Fq 'case "$PATH:" in' "$fake_home/.bashrc"
 grep -Fq 'export KEEP_THIS_SETTING=yes' "$fake_home/.bashrc"
-[[ "$(stat -f '%Lp' "$fake_home/.config/sage/qwen38-api-key" 2>/dev/null || stat -c '%a' "$fake_home/.config/sage/qwen38-api-key")" == 600 ]]
+[[ "$(node -e 'console.log((require("fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$fake_home/.config/sage/qwen38-api-key")" == 600 ]]
 [[ -x "$prefix/opt/$node_base/bin/node" ]]
 [[ -L "$prefix/bin/node" ]]
 [[ -f "$prefix/bin/opencode" && ! -L "$prefix/bin/opencode" ]]
@@ -189,6 +191,8 @@ grep -Fq 'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER' "$prefix/bin/opencode"
 grep -Fq 'ulimit -Sn "$target_limit"' "$prefix/bin/opencode"
 [[ "$(env -u OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == true ]]
 [[ "$(OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false "$prefix/bin/opencode" --watcher-env)" == false ]]
+[[ "$(env -u OPENCODE_DB "$prefix/bin/opencode" --database-env)" == sage-opencode-1.db ]]
+[[ "$(OPENCODE_DB=custom.db "$prefix/bin/opencode" --database-env)" == custom.db ]]
 doctor_output="$("$prefix/bin/opencode" --sage-opencode-doctor)"
 grep -Fqx 'filewatcher_disable=true' <<<"$doctor_output"
 grep -Fqx 'tui_config_watcher=absent-in-opencode-1.18.33' <<<"$doctor_output"
