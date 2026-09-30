@@ -1,0 +1,11 @@
+# Never commit local credentials.
+.env
+.env.*
+*.key
+*api-key*
+*secret*
+
+# Local editor and OS files.
+.DS_Store
+.idea/
+.vscode/
