@@ -12,6 +12,9 @@ IntelliStream SAGE Qwen service.
   SAGE endpoint before publication.
 - Keep the fallback Node.js LTS release and per-platform checksums pinned. Test
   installation with `node` and `npm` absent from the initial executable path.
+- Keep Linux's OpenCode launcher wrapper idempotent. It disables the upstream
+  file watcher by default to avoid EMFILE crashes on shared hosts, but must
+  preserve an explicit administrator-provided OpenCode environment value.
 - Compatibility patches must be narrow and fail closed when upstream source no
   longer matches the verified shape.
 - Run `tests/install-smoke.sh` before committing installer changes.

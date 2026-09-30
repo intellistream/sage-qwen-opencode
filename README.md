@@ -44,6 +44,10 @@ cd sage-qwen-opencode
 Node.js、OpenCode 和配置都安装在当前用户目录，不使用系统包管理器，也不需要
 `sudo`。已经有 Node.js 20 或更高版本时，脚本会直接使用现有版本。
 
+Linux 共享服务器上，安装器还会通过 OpenCode 官方环境开关停用文件监视器，
+避免 inotify 资源耗尽导致 `EMFILE: too many open files` 崩溃。OpenCode 的正常
+读写和工具调用不受影响，但外部程序改动文件时不再产生实时 watcher 事件。
+
 若当前终端还找不到 `opencode`，关闭并重新打开终端即可。
 
 ## 开始使用
@@ -144,6 +148,23 @@ OpenCode 或 `@opencode/ai`。
 
 确认服务器能够访问 `https://nodejs.org`，并且已经安装 `curl` 或 `wget`。
 脚本会校验锁定发行包的官方 SHA-256；校验不一致时不会继续安装。
+
+### `EMFILE: too many open files, watch ...`
+
+先拉取最新版并重新安装：
+
+```bash
+git pull
+./install.sh
+```
+
+新版会在 Linux 启动器中设置
+`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1`，不需要修改整台服务器的
+`sysctl`。若管理员已经提高 inotify 限额，希望恢复实时文件监视，可运行：
+
+```bash
+OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false opencode
+```
 
 ### npm 提示没有权限
 

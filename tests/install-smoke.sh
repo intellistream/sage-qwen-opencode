@@ -37,22 +37,27 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$prefix" ]]
 runtime="$prefix/lib/node_modules/@opencode/ai"
-mkdir -p "$runtime/dist/providers" "$runtime/dist/protocols" "$prefix/bin"
+cli="$prefix/lib/node_modules/@opencode/cli/bin/opencode.exe"
+mkdir -p "$runtime/dist/providers" "$runtime/dist/protocols" "$prefix/bin" "$(dirname "$cli")"
 : > "$runtime/dist/providers/openai-compatible-responses.js"
 {
   printf '%s\n' 'namespace: Schema.optional(Schema.String),'
   printf '%s\n' 'namespace: Schema.optional(Schema.String),'
   for _ in 1 2 3 4; do printf '%s\n' 'namespace: item.namespace,'; done
 } > "$runtime/dist/protocols/open-responses.js"
-cat > "$prefix/bin/opencode" <<'OPENCODE'
+cat > "$cli" <<'OPENCODE'
 #!/usr/bin/env bash
-if [[ "${1:-}" == debug && "${2:-}" == agents ]]; then
-  printf '%s\n' '[{"id":"sage-qwen","mode":"primary","model":{"providerID":"sage-qwen38","id":"Qwen/Qwen3.8-27B","variant":"xhigh"}}]'
+if [[ "${1:-}" == --version ]]; then
+  printf '%s\n' 'opencode v2.0.20 fixture'
+elif [[ "${1:-}" == --watcher-env ]]; then
+  printf '%s\n' "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"
 else
   printf '%s\n' 'OpenCode fixture'
 fi
 OPENCODE
-chmod +x "$prefix/bin/opencode"
+chmod +x "$cli"
+ln -s "../lib/node_modules/@opencode/cli/bin/opencode.exe" "$prefix/bin/opencode"
+ln -s "../lib/node_modules/@opencode/cli/bin/opencode.exe" "$prefix/bin/opencode2"
 EOF
 chmod +x "$fake_bin/npm"
 
@@ -113,6 +118,7 @@ run_installer() {
   SAGE_OPENCODE_INSTALL_PREFIX="$prefix" \
   SAGE_NODE_DIST_BASE_URL="https://fixture.invalid" \
   SAGE_NODE_ARCHIVE_SHA256="$fake_node_sha" \
+  SAGE_OPENCODE_DISABLE_FILEWATCHER=1 \
   FAKE_NODE_DIST="$node_dist" \
   PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$repo_root/install.sh"
@@ -170,5 +176,10 @@ protocol="$prefix/lib/node_modules/@opencode/ai/dist/protocols/open-responses.js
 [[ "$(stat -f '%Lp' "$fake_home/.config/sage/qwen38-api-key" 2>/dev/null || stat -c '%a' "$fake_home/.config/sage/qwen38-api-key")" == 600 ]]
 [[ -x "$prefix/opt/$node_base/bin/node" ]]
 [[ -L "$prefix/bin/node" ]]
+[[ -f "$prefix/bin/opencode" && ! -L "$prefix/bin/opencode" ]]
+grep -Fq '# sage-opencode Linux launcher' "$prefix/bin/opencode"
+grep -Fq 'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER' "$prefix/bin/opencode"
+[[ "$(env -u OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == 1 ]]
+[[ "$(OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false "$prefix/bin/opencode" --watcher-env)" == false ]]
 
 printf '%s\n' 'install smoke test (including Node bootstrap): PASS'

@@ -72,4 +72,16 @@ service even though the CLI and configuration are valid. Validate generated
 files offline and the CLI binary with `opencode --version`; reserve live agent
 discovery and model calls for explicit integration probes.
 
+## Shared-server file watcher
+
+OpenCode can fail with `EMFILE: too many open files, watch` when Linux inotify
+user instances are exhausted. This has been observed upstream even when the
+process file-descriptor limit itself is not the binding resource. Do not mutate
+host-wide `sysctl` values from this user installer. The managed `opencode` and
+`opencode2` launchers set the upstream-supported
+`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1` on Linux while preserving an
+explicit value supplied by an administrator. Reinstalling must remove only our
+marked wrapper before npm recreates its executable links, then recreate the
+wrapper after installation.
+
 Keep captured output bounded and never record the real key or request headers.

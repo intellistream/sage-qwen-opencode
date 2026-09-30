@@ -166,6 +166,17 @@ cli_config="$config_home/cli.json"
 secret_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sage"
 secret_file="$secret_dir/qwen38-api-key"
 backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/sage-opencode/backups/$(date '+%Y%m%d-%H%M%S')-$$"
+cli_binary="$install_prefix/lib/node_modules/@opencode/cli/bin/opencode.exe"
+
+# npm cannot replace our regular-file launchers with package symlinks on every
+# platform. Remove only launchers carrying our exact marker before reinstalling.
+for launcher_name in opencode opencode2; do
+  launcher_path="$install_prefix/bin/$launcher_name"
+  if [[ -f "$launcher_path" && ! -L "$launcher_path" ]] &&
+      grep -Fq '# sage-opencode Linux launcher' "$launcher_path"; then
+    unlink "$launcher_path"
+  fi
+done
 
 printf 'Installing OpenCode V2 %s in %s ...\n' "$opencode_version" "$install_prefix"
 npm install --global --prefix "$install_prefix" \
@@ -176,10 +187,40 @@ npm install --global --prefix "$install_prefix" \
   printf 'OpenCode installation did not create %s/bin/opencode\n' "$install_prefix" >&2
   exit 1
 }
+[[ -x "$cli_binary" ]] || {
+  printf 'OpenCode installation did not create %s\n' "$cli_binary" >&2
+  exit 1
+}
 [[ -f "$provider_module" && -f "$protocol_module" ]] || {
   printf 'The pinned OpenCode provider runtime is incomplete.\n' >&2
   exit 1
 }
+
+# OpenCode's Linux file watcher can exhaust inotify instances and crash with
+# EMFILE on shared servers. Use the upstream-supported opt-out in a launcher
+# rather than mutating host-wide sysctl settings. An explicit environment value
+# still wins, so administrators can re-enable watching after raising limits.
+disable_filewatcher="${SAGE_OPENCODE_DISABLE_FILEWATCHER:-auto}"
+if [[ "$disable_filewatcher" == auto ]]; then
+  [[ "$os_name" == Linux ]] && disable_filewatcher=1 || disable_filewatcher=0
+fi
+case "$disable_filewatcher" in
+  0|1) ;;
+  *) printf 'SAGE_OPENCODE_DISABLE_FILEWATCHER must be auto, 0, or 1.\n' >&2; exit 1 ;;
+esac
+if [[ "$disable_filewatcher" == 1 ]]; then
+  for launcher_name in opencode opencode2; do
+    launcher_path="$install_prefix/bin/$launcher_name"
+    [[ ! -e "$launcher_path" && ! -L "$launcher_path" ]] || unlink "$launcher_path"
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf '# sage-opencode Linux launcher\n'
+      printf 'export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER="${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-1}"\n'
+      printf 'exec %q "$@"\n' "$cli_binary"
+    } > "$launcher_path"
+    chmod 0755 "$launcher_path"
+  done
+fi
 
 # The SAGE endpoint currently emits namespace:null for Responses function-call
 # items. OpenCode 2.0.20 accepts a string or an omitted field. Patch only the
