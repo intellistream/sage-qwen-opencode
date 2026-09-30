@@ -10,6 +10,8 @@ IntelliStream SAGE Qwen service.
 - Keep OpenCode and provider-runtime versions pinned together. When upgrading,
   revalidate text generation and a complete shell-tool call loop against the
   SAGE endpoint before publication.
+- Keep the fallback Node.js LTS release and per-platform checksums pinned. Test
+  installation with `node` and `npm` absent from the initial executable path.
 - Compatibility patches must be narrow and fail closed when upstream source no
   longer matches the verified shape.
 - Run `tests/install-smoke.sh` before committing installer changes.

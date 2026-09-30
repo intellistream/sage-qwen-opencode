@@ -56,4 +56,20 @@ assistant message of a new session.
 6. Scan the candidate commit for keys, local user paths, and credential-bearing
    URLs before publication.
 
+## Node.js bootstrap
+
+When Node.js 20+ and npm are unavailable, `install.sh` installs the pinned
+Node.js LTS archive beneath `~/.local/opt` and links its executables into
+`~/.local/bin`. Supported artifacts and their official SHA-256 values are
+embedded in the installer; a digest mismatch must stop installation. Do not
+replace this with an unaudited remote shell pipeline or system package-manager
+mutation. Exercise `tests/install-smoke.sh` with the initial `node` command
+deliberately unusable whenever bootstrap behavior changes.
+
+Do not use `opencode debug agents` as an installer completion gate. On a
+pristine HOME, OpenCode 2.0.20 can time out while starting its background
+service even though the CLI and configuration are valid. Validate generated
+files offline and the CLI binary with `opencode --version`; reserve live agent
+discovery and model calls for explicit integration probes.
+
 Keep captured output bounded and never record the real key or request headers.

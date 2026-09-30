@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-node_bin_dir="$(dirname "$(command -v node)")"
+real_node="$(command -v node)"
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 
@@ -56,13 +56,65 @@ chmod +x "$prefix/bin/opencode"
 EOF
 chmod +x "$fake_bin/npm"
 
+case "$(uname -s)" in
+  Darwin) node_platform="darwin" ;;
+  Linux) node_platform="linux" ;;
+  *) printf 'unsupported fixture OS\n' >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  x86_64|amd64) node_arch="x64" ;;
+  arm64|aarch64) node_arch="arm64" ;;
+  *) printf 'unsupported fixture architecture\n' >&2; exit 1 ;;
+esac
+if [[ "$node_platform" == linux ]] && ldd --version 2>&1 | grep -qi musl; then
+  node_arch="${node_arch}-musl"
+fi
+node_base="node-v24.21.0-${node_platform}-${node_arch}"
+node_dist="$fixture/node-dist"
+node_payload="$fixture/node-payload/$node_base/bin"
+mkdir -p "$node_dist" "$node_payload"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$real_node" > "$node_payload/node"
+cp "$fake_bin/npm" "$node_payload/npm"
+chmod +x "$node_payload/node" "$node_payload/npm"
+tar -czf "$node_dist/$node_base.tar.gz" -C "$fixture/node-payload" "$node_base"
+fake_node_sha="$($real_node --input-type=module - "$node_dist/$node_base.tar.gz" <<'NODE'
+import crypto from "node:crypto";
+import fs from "node:fs";
+console.log(crypto.createHash("sha256").update(fs.readFileSync(process.argv[2])).digest("hex"));
+NODE
+)"
+
+cat > "$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output|-o) output="$2"; shift 2 ;;
+    http://*|https://*|file://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+[[ -n "$output" && -n "$url" ]]
+cp "$FAKE_NODE_DIST/${url##*/}" "$output"
+EOF
+cat > "$fake_bin/node" <<'EOF'
+#!/usr/bin/env bash
+exit 127
+EOF
+chmod +x "$fake_bin/curl" "$fake_bin/node"
+
 run_installer() {
   HOME="$fake_home" \
   SHELL=/bin/bash \
   XDG_CONFIG_HOME="$fake_home/.config" \
   XDG_STATE_HOME="$fake_home/.local/state" \
   SAGE_OPENCODE_INSTALL_PREFIX="$prefix" \
-  PATH="$fake_bin:$node_bin_dir:/usr/bin:/bin:/usr/sbin:/sbin" \
+  SAGE_NODE_DIST_BASE_URL="https://fixture.invalid" \
+  SAGE_NODE_ARCHIVE_SHA256="$fake_node_sha" \
+  FAKE_NODE_DIST="$node_dist" \
+  PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$repo_root/install.sh"
 }
 
@@ -116,5 +168,7 @@ protocol="$prefix/lib/node_modules/@opencode/ai/dist/protocols/open-responses.js
 [[ "$(grep -Fc 'namespace: item.namespace ?? undefined,' "$protocol")" -eq 4 ]]
 [[ "$(grep -Fc '# >>> sage-opencode path' "$fake_home/.bashrc")" -eq 1 ]]
 [[ "$(stat -f '%Lp' "$fake_home/.config/sage/qwen38-api-key" 2>/dev/null || stat -c '%a' "$fake_home/.config/sage/qwen38-api-key")" == 600 ]]
+[[ -x "$prefix/opt/$node_base/bin/node" ]]
+[[ -L "$prefix/bin/node" ]]
 
-printf '%s\n' 'install smoke test: PASS'
+printf '%s\n' 'install smoke test (including Node bootstrap): PASS'

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 opencode_version="2.0.20"
+node_version="24.21.0"
 replace_key=0
+install_prefix="${SAGE_OPENCODE_INSTALL_PREFIX:-$HOME/.local}"
 
 usage() {
   cat <<'EOF'
@@ -24,7 +26,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$(uname -s)" in
+os_name="$(uname -s)"
+case "$os_name" in
   Darwin|Linux) ;;
   *)
     printf 'Please run this script on macOS, Linux, or Windows WSL.\n' >&2
@@ -32,15 +35,128 @@ case "$(uname -s)" in
     ;;
 esac
 
-for command_name in node npm; do
-  if ! command -v "$command_name" >/dev/null 2>&1; then
-    printf '%s is required. Install the current Node.js LTS release, reopen the terminal, and run this script again.\n' \
-      "$command_name" >&2
-    exit 1
-  fi
-done
+node_is_usable() {
+  command -v node >/dev/null 2>&1 &&
+    command -v npm >/dev/null 2>&1 &&
+    node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' \
+      >/dev/null 2>&1
+}
 
-install_prefix="${SAGE_OPENCODE_INSTALL_PREFIX:-$HOME/.local}"
+download_file() {
+  local url="$1"
+  local output="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --silent --show-error --output "$output" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget --quiet --output-document="$output" "$url"
+  else
+    printf 'curl or wget is required to download Node.js.\n' >&2
+    return 1
+  fi
+}
+
+sha256_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | awk '{print $NF}'
+  else
+    printf 'sha256sum, shasum, or openssl is required to verify Node.js.\n' >&2
+    return 1
+  fi
+}
+
+install_node() {
+  local arch platform artifact expected_sha actual_sha base url
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      printf 'Automatic Node.js installation does not support architecture: %s\n' "$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+
+  case "$os_name" in
+    Darwin) platform="darwin-$arch" ;;
+    Linux)
+      platform="linux-$arch"
+      if ldd --version 2>&1 | grep -qi musl; then
+        if [[ "$arch" != "x64" ]]; then
+          printf 'Automatic Node.js installation does not support Linux musl on %s.\n' "$arch" >&2
+          return 1
+        fi
+        platform="linux-x64-musl"
+      fi
+      ;;
+  esac
+
+  artifact="node-v${node_version}-${platform}.tar.gz"
+  case "$artifact" in
+    node-v24.21.0-darwin-arm64.tar.gz) expected_sha="bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057" ;;
+    node-v24.21.0-darwin-x64.tar.gz) expected_sha="1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097" ;;
+    node-v24.21.0-linux-arm64.tar.gz) expected_sha="724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5" ;;
+    node-v24.21.0-linux-x64-musl.tar.gz) expected_sha="3d63405fc65a0d2d2976c1f0bc2fd27bb0bd07212469e705aac3f03ae5ab4c9c" ;;
+    node-v24.21.0-linux-x64.tar.gz) expected_sha="6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff" ;;
+    *) printf 'No pinned checksum is available for %s.\n' "$artifact" >&2; return 1 ;;
+  esac
+  # Test fixtures may override the source and expected digest. Production uses
+  # the pinned official Node.js URL and published digest above.
+  expected_sha="${SAGE_NODE_ARCHIVE_SHA256:-$expected_sha}"
+  url="${SAGE_NODE_DIST_BASE_URL:-https://nodejs.org/dist/v$node_version}/$artifact"
+  base="${artifact%.tar.gz}"
+
+  local temp_root node_temp_dir archive_path node_home
+  temp_root="${TMPDIR:-/tmp}"
+  node_temp_dir="$(mktemp -d "$temp_root/sage-node.XXXXXX")"
+  archive_path="$node_temp_dir/$artifact"
+  node_home="$install_prefix/opt/$base"
+
+  cleanup_node_download() {
+    if [[ -n "${node_temp_dir:-}" && "$node_temp_dir" == "$temp_root"/sage-node.* ]]; then
+      rm -rf -- "$node_temp_dir"
+    fi
+  }
+  trap cleanup_node_download EXIT INT TERM
+
+  printf 'Node.js is missing or too old; installing Node.js %s LTS in %s ...\n' \
+    "$node_version" "$install_prefix"
+  download_file "$url" "$archive_path"
+  actual_sha="$(sha256_file "$archive_path")"
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    printf 'Node.js checksum verification failed for %s.\n' "$artifact" >&2
+    return 1
+  fi
+
+  mkdir -p "$install_prefix/opt" "$install_prefix/bin"
+  if [[ -e "$node_home" && ! -x "$node_home/bin/node" ]]; then
+    printf 'Existing incomplete Node.js directory: %s\n' "$node_home" >&2
+    return 1
+  fi
+  if [[ ! -x "$node_home/bin/node" ]]; then
+    tar -xzf "$archive_path" -C "$install_prefix/opt"
+  fi
+  for executable in node npm npx corepack; do
+    [[ -e "$node_home/bin/$executable" ]] || continue
+    ln -sfn "../opt/$base/bin/$executable" "$install_prefix/bin/$executable"
+  done
+
+  cleanup_node_download
+  trap - EXIT INT TERM
+  export PATH="$install_prefix/bin:$PATH"
+  node_is_usable || {
+    printf 'The local Node.js installation did not become usable.\n' >&2
+    return 1
+  }
+}
+
+if ! node_is_usable; then
+  install_node
+fi
+
 runtime_root="$install_prefix/lib/node_modules/@opencode/ai"
 provider_module="$runtime_root/dist/providers/openai-compatible-responses.js"
 protocol_module="$runtime_root/dist/protocols/open-responses.js"
@@ -300,32 +416,27 @@ EOF
 chmod 0600 "$config_home/opencode.jsonc" "$cli_config"
 chmod 0644 "$agent_home/sage-qwen.md"
 
-agent_check() {
-  local agent_summary
-  agent_summary="$($install_prefix/bin/opencode debug agents)"
-  node --input-type=module - "$agent_summary" <<'NODE'
-const agents = JSON.parse(process.argv[2]);
-const agent = agents.find((candidate) => candidate.id === "sage-qwen");
-if (!agent) process.exit(1);
-if (agent.mode !== "primary") throw new Error(`Unexpected agent mode: ${agent.mode}`);
-if (agent.model?.providerID !== "sage-qwen38" ||
-    agent.model?.id !== "Qwen/Qwen3.8-27B" ||
-    agent.model?.variant !== "xhigh") {
-  throw new Error(`Unexpected agent model: ${JSON.stringify(agent.model)}`);
+# Validate the generated profile without starting OpenCode's background
+# service. A pristine HOME can take long enough to initialize that service to
+# make an otherwise successful first installation look like a failure.
+node --input-type=module - \
+  "$config_home/opencode.jsonc" "$agent_home/sage-qwen.md" <<'NODE'
+import fs from "node:fs";
+const [configPath, agentPath] = process.argv.slice(2);
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+if (config.model !== "sage-qwen38/Qwen/Qwen3.8-27B") {
+  throw new Error(`Unexpected default model: ${config.model}`);
+}
+if (config.default_agent !== "sage-qwen") {
+  throw new Error(`Unexpected default agent: ${config.default_agent}`);
+}
+const agent = fs.readFileSync(agentPath, "utf8");
+if (!/^mode: primary$/m.test(agent) ||
+    !/^model: sage-qwen38\/Qwen\/Qwen3\.8-27B#xhigh$/m.test(agent)) {
+  throw new Error("The sage-qwen agent profile is invalid");
 }
 NODE
-}
-
-# A fresh OpenCode installation can return only its built-in agents on the
-# first debug invocation while it initializes local state. Retry once, then
-# fail rather than reporting an installation that OpenCode cannot discover.
-if ! agent_check; then
-  sleep 1
-  agent_check || {
-    printf 'OpenCode did not discover the sage-qwen agent.\n' >&2
-    exit 1
-  }
-fi
+"$install_prefix/bin/opencode" --version >/dev/null
 
 cat <<EOF
 

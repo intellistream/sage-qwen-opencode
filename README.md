@@ -19,18 +19,6 @@
 
 原生 Windows PowerShell 暂不在验证范围内。
 
-## 安装前准备
-
-先确认 Node.js 和 npm 可用：
-
-```bash
-node --version
-npm --version
-```
-
-两条命令都能显示版本号即可。若提示 `command not found`，请先安装当前
-Node.js LTS，再关闭并重新打开终端。整个安装过程不需要 `sudo`。
-
 ## 一键安装
 
 ```bash
@@ -44,13 +32,17 @@ cd sage-qwen-opencode
 
 安装脚本会自动：
 
-1. 在用户目录 `~/.local` 安装固定版本的 OpenCode V2；
-2. 配置 SAGE Responses provider；
-3. 创建 `sage-qwen` 主 Agent，并将它与 SAGE 模型设为新会话默认项；
-4. 配置三档推理强度、默认 `xhigh` 和 `262144` 上下文窗口；
-5. 把个人 API Key 保存为权限 `0600` 的独立文件；
-6. 应用当前 SAGE 工具调用所需的窄兼容修正；
-7. 保留原有 OpenCode 配置，并在修改前创建备份。
+1. 缺少 Node.js 时，从 Node.js 官方站下载并校验固定的 LTS 版本；
+2. 在用户目录 `~/.local` 安装固定版本的 OpenCode V2；
+3. 配置 SAGE Responses provider；
+4. 创建 `sage-qwen` 主 Agent，并将它与 SAGE 模型设为新会话默认项；
+5. 配置三档推理强度、默认 `xhigh` 和 `262144` 上下文窗口；
+6. 把个人 API Key 保存为权限 `0600` 的独立文件；
+7. 应用当前 SAGE 工具调用所需的窄兼容修正；
+8. 保留原有 OpenCode 配置，并在修改前创建备份。
+
+Node.js、OpenCode 和配置都安装在当前用户目录，不使用系统包管理器，也不需要
+`sudo`。已经有 Node.js 20 或更高版本时，脚本会直接使用现有版本。
 
 若当前终端还找不到 `opencode`，关闭并重新打开终端即可。
 
@@ -147,6 +139,11 @@ export PATH="$HOME/.local/bin:$PATH"
 
 重新运行 `./install.sh`。脚本会重新安装锁定版本并应用兼容修正。不要单独升级
 OpenCode 或 `@opencode/ai`。
+
+### Node.js 下载失败
+
+确认服务器能够访问 `https://nodejs.org`，并且已经安装 `curl` 或 `wget`。
+脚本会校验锁定发行包的官方 SHA-256；校验不一致时不会继续安装。
 
 ### npm 提示没有权限
 
