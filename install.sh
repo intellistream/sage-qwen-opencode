@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-opencode_version="2.0.20"
+opencode_version="1.18.33"
+openai_sdk_version="3.0.88"
 node_version="24.21.0"
 replace_key=0
 install_prefix="${SAGE_OPENCODE_INSTALL_PREFIX:-$HOME/.local}"
@@ -10,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage: ./install.sh [--replace-key]
 
-Install the IntelliStream SAGE Qwen profile for OpenCode V2.
+Install the IntelliStream SAGE Qwen profile for OpenCode.
 
 Options:
   --replace-key  Prompt for a new personal API key even if one is configured.
@@ -158,16 +159,15 @@ if ! node_is_usable; then
 fi
 export PATH="$install_prefix/bin:$PATH"
 
-runtime_root="$install_prefix/lib/node_modules/@opencode/ai"
-provider_module="$runtime_root/dist/providers/openai-compatible-responses.js"
-protocol_module="$runtime_root/dist/protocols/open-responses.js"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 agent_home="$config_home/agents"
-cli_config="$config_home/cli.json"
+tui_config="$config_home/tui.json"
 secret_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sage"
 secret_file="$secret_dir/qwen38-api-key"
 backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/sage-opencode/backups/$(date '+%Y%m%d-%H%M%S')-$$"
-cli_binary="$install_prefix/lib/node_modules/@opencode/cli/bin/opencode.exe"
+cli_binary="$install_prefix/lib/node_modules/opencode-ai/bin/opencode.exe"
+adapter_root="$install_prefix/lib/node_modules/@intellistream/sage-qwen-provider"
+adapter_module="$adapter_root/index.mjs"
 
 # npm cannot replace our regular-file launchers with package symlinks on every
 # platform. Remove only launchers carrying our exact marker before reinstalling.
@@ -179,10 +179,10 @@ for launcher_name in opencode opencode2; do
   fi
 done
 
-printf 'Installing OpenCode V2 %s in %s ...\n' "$opencode_version" "$install_prefix"
+printf 'Installing OpenCode %s in %s ...\n' "$opencode_version" "$install_prefix"
 npm install --global --prefix "$install_prefix" \
-  "@opencode/cli@$opencode_version" \
-  "@opencode/ai@$opencode_version"
+  "opencode-ai@$opencode_version" \
+  "@ai-sdk/openai@$openai_sdk_version"
 
 [[ -x "$install_prefix/bin/opencode" ]] || {
   printf 'OpenCode installation did not create %s/bin/opencode\n' "$install_prefix" >&2
@@ -192,16 +192,54 @@ npm install --global --prefix "$install_prefix" \
   printf 'OpenCode installation did not create %s\n' "$cli_binary" >&2
   exit 1
 }
-[[ -f "$provider_module" && -f "$protocol_module" ]] || {
-  printf 'The pinned OpenCode provider runtime is incomplete.\n' >&2
+[[ -d "$install_prefix/lib/node_modules/@ai-sdk/openai" ]] || {
+  printf 'The pinned OpenAI provider runtime is incomplete.\n' >&2
   exit 1
 }
 
-# OpenCode's Linux file watcher can exhaust inotify instances and crash with
-# EMFILE on shared servers. OpenCode V2 2.0.20 reads
-# OPENCODE_FILEWATCHER_DISABLE (and the legacy OPENCODE_DISABLE_FILEWATCHER),
-# despite its bundled documentation naming a different experimental variable.
-# Use the implemented opt-out rather than mutating host-wide sysctl settings.
+mkdir -p "$adapter_root"
+cat > "$adapter_root/package.json" <<'EOF'
+{
+  "name": "@intellistream/sage-qwen-provider",
+  "private": true,
+  "type": "module"
+}
+EOF
+cat > "$adapter_module" <<'EOF'
+import { createOpenAI } from "@ai-sdk/openai";
+
+function repairResponsesInput(body) {
+  if (!body || typeof body !== "object" || !Array.isArray(body.input)) return body;
+  body.input = body.input
+    .filter((item) => !(item && typeof item === "object" && item.type === "item_reference"))
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      if (item.role !== "assistant" || item.type !== undefined || !Array.isArray(item.content)) return item;
+      return { type: "message", status: "completed", ...item };
+    });
+  return body;
+}
+
+export function createSage(options = {}) {
+  const baseFetch = options.fetch ?? globalThis.fetch;
+  const fetch = async (input, init) => {
+    if (typeof init?.body === "string" && String(input).includes("/responses")) {
+      try {
+        init = { ...init, body: JSON.stringify(repairResponsesInput(JSON.parse(init.body))) };
+      } catch {
+        // Preserve a non-JSON request unchanged.
+      }
+    }
+    return baseFetch(input, init);
+  };
+  return createOpenAI({ ...options, fetch });
+}
+EOF
+
+# OpenCode's Linux project watcher can exhaust shared-server inotify resources.
+# Stable OpenCode 1.18.33 reads OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER and
+# has no separate TUI config watcher. Also raise only this process tree's FD
+# soft limit; never mutate host-wide sysctls from a user installer.
 disable_filewatcher="${SAGE_OPENCODE_DISABLE_FILEWATCHER:-auto}"
 if [[ "$disable_filewatcher" == auto ]]; then
   [[ "$os_name" == Linux ]] && disable_filewatcher=1 || disable_filewatcher=0
@@ -217,12 +255,29 @@ if [[ "$disable_filewatcher" == 1 ]]; then
     {
       printf '#!/usr/bin/env bash\n'
       printf '# sage-opencode Linux launcher\n'
-      printf 'if [[ -z "${OPENCODE_FILEWATCHER_DISABLE+x}" && -z "${OPENCODE_DISABLE_FILEWATCHER+x}" ]]; then\n'
-      printf '  export OPENCODE_FILEWATCHER_DISABLE=1\n'
+      printf '# Raise only this process tree; never exceed the administrator-set hard limit.\n'
+      printf 'soft_limit="$(ulimit -Sn 2>/dev/null || printf 0)"\n'
+      printf 'hard_limit="$(ulimit -Hn 2>/dev/null || printf 0)"\n'
+      printf 'if [[ "$soft_limit" =~ ^[0-9]+$ && "$hard_limit" =~ ^[0-9]+$ && "$soft_limit" -lt 65536 ]]; then\n'
+      printf '  target_limit=65536\n'
+      printf '  (( hard_limit < target_limit )) && target_limit="$hard_limit"\n'
+      printf '  (( target_limit > soft_limit )) && ulimit -Sn "$target_limit" 2>/dev/null || true\n'
+      printf 'fi\n'
+      printf 'if [[ -z "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER+x}" ]]; then\n'
+      printf '  export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true\n'
       printf 'fi\n'
       printf 'if [[ "${1:-}" == "--sage-opencode-doctor" ]]; then\n'
       printf '  printf "launcher=%%s\\n" "$0"\n'
-      printf '  printf "filewatcher_disable=%%s\\n" "${OPENCODE_FILEWATCHER_DISABLE:-${OPENCODE_DISABLE_FILEWATCHER:-unset}}"\n'
+      printf '  printf "filewatcher_disable=%%s\\n" "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"\n'
+      printf '  printf "tui_config_watcher=absent-in-opencode-1.18.33\\n"\n'
+      printf '  printf "open_files_soft_limit=%%s\\n" "$(ulimit -Sn 2>/dev/null || printf unknown)"\n'
+      printf '  printf "open_files_hard_limit=%%s\\n" "$(ulimit -Hn 2>/dev/null || printf unknown)"\n'
+      printf '  if [[ -r /proc/sys/fs/inotify/max_user_instances ]]; then\n'
+      printf '    printf "inotify_max_user_instances=%%s\\n" "$(cat /proc/sys/fs/inotify/max_user_instances)"\n'
+      printf '  fi\n'
+      printf '  if [[ -r /proc/sys/fs/inotify/max_user_watches ]]; then\n'
+      printf '    printf "inotify_max_user_watches=%%s\\n" "$(cat /proc/sys/fs/inotify/max_user_watches)"\n'
+      printf '  fi\n'
       printf '  exec %q --version\n' "$cli_binary"
       printf 'fi\n'
       printf 'exec %q "$@"\n' "$cli_binary"
@@ -230,49 +285,11 @@ if [[ "$disable_filewatcher" == 1 ]]; then
     chmod 0755 "$launcher_path"
   done
   launcher_diagnosis="$($install_prefix/bin/opencode --sage-opencode-doctor)"
-  grep -Fqx 'filewatcher_disable=1' <<<"$launcher_diagnosis" || {
+  grep -Fqx 'filewatcher_disable=true' <<<"$launcher_diagnosis" || {
     printf 'The Linux launcher did not disable OpenCode file watching.\n' >&2
     exit 1
   }
-  # Do not leave a previously spawned watcher-enabled service alive. The next
-  # OpenCode invocation starts a clean service through the corrected launcher.
-  "$install_prefix/bin/opencode" service stop >/dev/null 2>&1 || true
 fi
-
-# The SAGE endpoint currently emits namespace:null for Responses function-call
-# items. OpenCode 2.0.20 accepts a string or an omitted field. Patch only the
-# six known sites and fail closed if the pinned runtime changes shape.
-node --input-type=module - "$protocol_module" <<'NODE'
-import fs from "node:fs";
-
-const path = process.argv[2];
-let source = fs.readFileSync(path, "utf8");
-
-function replaceExact(oldText, newText, expected) {
-  const oldCount = source.split(oldText).length - 1;
-  const newCount = source.split(newText).length - 1;
-  if (oldCount === expected && newCount === 0) {
-    source = source.split(oldText).join(newText);
-    return;
-  }
-  if (oldCount === 0 && newCount === expected) return;
-  throw new Error(
-    `Unexpected OpenCode runtime shape for ${oldText}: old=${oldCount}, patched=${newCount}`,
-  );
-}
-
-replaceExact(
-  "namespace: Schema.optional(Schema.String),",
-  "namespace: Schema.optional(Schema.NullOr(Schema.String)),",
-  2,
-);
-replaceExact(
-  "namespace: item.namespace,",
-  "namespace: item.namespace ?? undefined,",
-  4,
-);
-fs.writeFileSync(path, source);
-NODE
 
 mkdir -p "$secret_dir"
 chmod 0700 "$secret_dir"
@@ -340,17 +357,17 @@ rm -f -- "$shell_tmp"
 mkdir -p "$config_home" "$agent_home"
 backup_if_present "$config_home/opencode.jsonc"
 backup_if_present "$agent_home/sage-qwen.md"
-backup_if_present "$cli_config"
+backup_if_present "$tui_config"
 
 # Merge the provider into any existing JSON/JSONC configuration. Other values
 # are retained. The original file (including comments and formatting) is kept
 # in the timestamped backup because the merged file is normalized as JSON.
 node --input-type=module - \
-  "$config_home/opencode.jsonc" "$provider_module" "$secret_file" "$cli_config" <<'NODE'
+  "$config_home/opencode.jsonc" "$adapter_module" "$secret_file" "$tui_config" <<'NODE'
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [target, providerPath, secretPath, cliTarget] = process.argv.slice(2);
+const [target, adapterPath, secretPath, tuiTarget] = process.argv.slice(2);
 
 function stripJSONC(source) {
   let out = "";
@@ -412,66 +429,75 @@ if (fs.existsSync(target) && fs.statSync(target).size > 0) {
 }
 
 config.$schema ??= "https://opencode.ai/config.json";
-// OpenCode V2 stores the session model separately from the selected primary
-// agent. Set both defaults so a fresh session actually uses SAGE; users can
-// still switch either choice interactively.
 config.model = "sage-qwen38/Qwen/Qwen3.8-27B";
 config.default_agent = "sage-qwen";
-config.providers ??= {};
-if (!config.providers || Array.isArray(config.providers) || typeof config.providers !== "object") {
-  throw new Error("Existing OpenCode providers setting must be an object");
+if (config.providers && !Array.isArray(config.providers) && typeof config.providers === "object") {
+  delete config.providers["sage-qwen38"];
+  if (Object.keys(config.providers).length === 0) delete config.providers;
 }
-config.providers["sage-qwen38"] = {
+config.provider ??= {};
+if (!config.provider || Array.isArray(config.provider) || typeof config.provider !== "object") {
+  throw new Error("Existing OpenCode provider setting must be an object");
+}
+config.provider["sage-qwen38"] = {
+  id: "sage-qwen38",
   name: "SAGE Qwen3.8-27B",
-  package: pathToFileURL(providerPath).href,
-  settings: {
+  npm: pathToFileURL(adapterPath).href,
+  env: [],
+  options: {
     baseURL: "https://openai.sage.org.ai/v1",
     apiKey: `{file:${secretPath}}`,
+    timeout: 300000,
   },
   models: {
     "Qwen/Qwen3.8-27B": {
+      id: "Qwen/Qwen3.8-27B",
       name: "Qwen3.8-27B",
-      capabilities: {
-        tools: true,
-        input: ["text"],
-        output: ["text"],
-      },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: false,
+      modalities: { input: ["text"], output: ["text"] },
       limit: { context: 262144, output: 32768 },
-      settings: { reasoningEffort: "xhigh" },
-      variants: [
-        { id: "low", settings: { reasoningEffort: "low" } },
-        { id: "medium", settings: { reasoningEffort: "medium" } },
-        { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
-      ],
+      options: { reasoningEffort: "xhigh" },
+      variants: {
+        low: { reasoningEffort: "low" },
+        medium: { reasoningEffort: "medium" },
+        xhigh: { reasoningEffort: "xhigh" },
+      },
     },
   },
 };
 fs.writeFileSync(target, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 
-let cli = {};
-if (fs.existsSync(cliTarget) && fs.statSync(cliTarget).size > 0) {
-  cli = JSON.parse(stripJSONC(fs.readFileSync(cliTarget, "utf8")));
-  if (!cli || Array.isArray(cli) || typeof cli !== "object") {
-    throw new Error("Existing OpenCode CLI config must be a JSON object");
+let tui = {};
+if (fs.existsSync(tuiTarget) && fs.statSync(tuiTarget).size > 0) {
+  tui = JSON.parse(stripJSONC(fs.readFileSync(tuiTarget, "utf8")));
+  if (!tui || Array.isArray(tui) || typeof tui !== "object") {
+    throw new Error("Existing OpenCode TUI config must be a JSON object");
   }
 }
-cli.$schema ??= "https://opencode.ai/v2/cli.json";
-cli.keybinds ??= {};
-if (!cli.keybinds || Array.isArray(cli.keybinds) || typeof cli.keybinds !== "object") {
-  throw new Error("Existing OpenCode CLI keybinds setting must be an object");
+tui.$schema ??= "https://opencode.ai/tui.json";
+tui.keybinds ??= {};
+if (!tui.keybinds || Array.isArray(tui.keybinds) || typeof tui.keybinds !== "object") {
+  throw new Error("Existing OpenCode TUI keybinds setting must be an object");
 }
-// Shift+Tab normally cycles agents in OpenCode V2. For this course profile it
+// Shift+Tab normally cycles agents. For this course profile it
 // cycles low/medium/xhigh reasoning instead; Ctrl+T keeps agent cycling handy.
-cli.keybinds["variant.cycle"] = "shift+tab";
-cli.keybinds["agent.cycle"] = "ctrl+t";
-fs.writeFileSync(cliTarget, `${JSON.stringify(cli, null, 2)}\n`, { mode: 0o600 });
+tui.keybinds.variant_cycle = "shift+tab";
+tui.keybinds.agent_cycle = "ctrl+t";
+// The stable TUI also binds Shift+Tab to reverse agent cycling by default.
+// Disable that competing binding so Shift+Tab has exactly one meaning.
+tui.keybinds.agent_cycle_reverse = "none";
+fs.writeFileSync(tuiTarget, `${JSON.stringify(tui, null, 2)}\n`, { mode: 0o600 });
 NODE
 
 cat > "$agent_home/sage-qwen.md" <<'EOF'
 ---
 description: Full coding agent backed by the course SAGE Qwen service.
 mode: primary
-model: sage-qwen38/Qwen/Qwen3.8-27B#xhigh
+model: sage-qwen38/Qwen/Qwen3.8-27B
+variant: xhigh
 ---
 
 You are a coding agent. Follow repository instructions and inspect relevant
@@ -479,12 +505,10 @@ files before editing. Use tools directly, preserve unrelated changes, and run
 relevant tests. Answer concisely with the changes, validation, and any material
 limitations.
 EOF
-chmod 0600 "$config_home/opencode.jsonc" "$cli_config"
+chmod 0600 "$config_home/opencode.jsonc" "$tui_config"
 chmod 0644 "$agent_home/sage-qwen.md"
 
-# Validate the generated profile without starting OpenCode's background
-# service. A pristine HOME can take long enough to initialize that service to
-# make an otherwise successful first installation look like a failure.
+# Validate the generated profile without starting the interactive TUI.
 node --input-type=module - \
   "$config_home/opencode.jsonc" "$agent_home/sage-qwen.md" <<'NODE'
 import fs from "node:fs";
@@ -498,7 +522,8 @@ if (config.default_agent !== "sage-qwen") {
 }
 const agent = fs.readFileSync(agentPath, "utf8");
 if (!/^mode: primary$/m.test(agent) ||
-    !/^model: sage-qwen38\/Qwen\/Qwen3\.8-27B#xhigh$/m.test(agent)) {
+    !/^model: sage-qwen38\/Qwen\/Qwen3\.8-27B$/m.test(agent) ||
+    !/^variant: xhigh$/m.test(agent)) {
   throw new Error("The sage-qwen agent profile is invalid");
 }
 NODE
@@ -517,7 +542,7 @@ Or use the managed launcher immediately in this terminal:
 New sessions default to the "sage-qwen" agent and SAGE Qwen model.
 
 One-shot usage:
-  opencode run --agent sage-qwen --model 'sage-qwen38/Qwen/Qwen3.8-27B#xhigh' "请阅读当前项目并说明它的结构"
+  opencode run --agent sage-qwen --model 'sage-qwen38/Qwen/Qwen3.8-27B' --variant xhigh "请阅读当前项目并说明它的结构"
 
 Your API key is stored only in:
   $secret_file

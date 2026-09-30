@@ -6,7 +6,7 @@
 > 服务地址：`https://openai.sage.org.ai/v1`  
 > 上下文窗口：`262144`  
 > 推理强度：`low` / `medium` / `xhigh`（默认 `xhigh`）
-> 验证版本：OpenCode V2 `2.0.20`（2026-09-30）
+> 验证版本：OpenCode `1.18.33`（2026-09-30）
 
 仓库**不包含任何 API Key**。请使用课题组单独发给你的个人 Key，不要互相
 转发，也不要把 Key 提交到 Git、粘贴到群聊或写进项目文件。
@@ -14,7 +14,7 @@
 ## 支持的系统
 
 - macOS；
-- Linux；
+- Linux（包括没有 root 权限的普通账户）；
 - Windows 用户请使用 WSL。
 
 原生 Windows PowerShell 暂不在验证范围内。
@@ -33,24 +33,23 @@ cd sage-qwen-opencode
 安装脚本会自动：
 
 1. 缺少 Node.js 时，从 Node.js 官方站下载并校验固定的 LTS 版本；
-2. 在用户目录 `~/.local` 安装固定版本的 OpenCode V2；
-3. 配置 SAGE Responses provider；
+2. 在当前用户的 `~/.local` 中安装固定版本的 OpenCode 和 provider 运行时；
+3. 配置 SAGE Responses provider 及其窄兼容适配器；
 4. 创建 `sage-qwen` 主 Agent，并将它与 SAGE 模型设为新会话默认项；
 5. 配置三档推理强度、默认 `xhigh` 和 `262144` 上下文窗口；
 6. 把个人 API Key 保存为权限 `0600` 的独立文件；
-7. 应用当前 SAGE 工具调用所需的窄兼容修正；
-8. 保留原有 OpenCode 配置，并在修改前创建备份。
+7. 保留原有 OpenCode 配置，并在修改前创建备份。
 
-Node.js、OpenCode 和配置都安装在当前用户目录，不使用系统包管理器，也不需要
-`sudo`。已经有 Node.js 20 或更高版本时，脚本会直接使用现有版本。
+整个过程只修改当前用户目录，不使用系统包管理器，**不需要 `root` 或
+`sudo`**。已经有 Node.js 20 或更高版本时，脚本会直接使用现有版本。
 
-Linux 共享服务器上，安装器还会通过 OpenCode 官方环境开关停用文件监视器，
-避免 inotify 资源耗尽导致 `EMFILE: too many open files` 崩溃。OpenCode 的正常
-读写和工具调用不受影响，但外部程序改动文件时不再产生实时 watcher 事件。
+Linux 共享服务器上，安装器还会通过用户态启动器关闭 OpenCode 项目文件监听，
+并仅在当前 OpenCode 进程内、在系统硬上限允许的范围内提高文件描述符软上限。
+它不会修改主机的 `sysctl`。本仓库固定的 OpenCode 版本也没有此前触发
+`~/.config/opencode` 崩溃的 TUI 配置目录监听。
 
-若当前终端还找不到 `opencode`，关闭并重新打开终端即可。
-也可以不等待，直接运行 `~/.local/bin/opencode`。当系统中还装有另一份
-OpenCode 时，请用下面的诊断命令确认命中的是本安装器管理的启动器。
+若当前终端还找不到 `opencode`，关闭并重新打开终端即可；也可以直接运行
+`~/.local/bin/opencode`。
 
 ## 开始使用
 
@@ -61,15 +60,12 @@ cd /你的/项目目录
 opencode
 ```
 
-新会话会默认使用 `sage-qwen` 与 SAGE Qwen 模型。若当前会话已经选过其他
-Agent 或模型，请新建会话，或按 **Tab** 选择 `sage-qwen` 并在 `/models` 中选择
-`sage-qwen38/Qwen/Qwen3.8-27B`。
-
-也可以直接运行单次任务：
+新会话默认使用 `sage-qwen` 与 SAGE Qwen 模型。也可以直接运行单次任务：
 
 ```bash
 opencode run --agent sage-qwen \
-  --model 'sage-qwen38/Qwen/Qwen3.8-27B#xhigh' \
+  --model 'sage-qwen38/Qwen/Qwen3.8-27B' \
+  --variant xhigh \
   "请阅读当前项目并说明目录结构"
 ```
 
@@ -85,17 +81,17 @@ low → medium → xhigh
 - `medium`：一般代码阅读和开发任务；
 - `xhigh`：宽搜索、复杂排障和测试任务，安装后的默认档位。
 
-OpenCode V2 原本把 Shift+Tab 用于切换 Agent；安装脚本会把它改成推理档位
-切换，并把 Agent 循环切换移到 **Ctrl+T**。也可以按 **Ctrl+X**，再按 **A**
-打开 Agent 列表。
+OpenCode 原本也把 Shift+Tab 用于反向切换 Agent；安装脚本会解除这个冲突，
+并把 Agent 循环切换放到 **Ctrl+T**。
 
 ## 验证工具调用
 
 在一个无关紧要的目录中运行：
 
 ```bash
-opencode run --standalone --auto --agent sage-qwen \
-  --model 'sage-qwen38/Qwen/Qwen3.8-27B#xhigh' \
+opencode run --agent sage-qwen \
+  --model 'sage-qwen38/Qwen/Qwen3.8-27B' \
+  --variant xhigh \
   '请调用 shell 工具执行一次 pwd，然后只返回它输出的绝对路径。'
 ```
 
@@ -107,11 +103,11 @@ OpenCode 工具调用闭环均已正常工作。
 ```text
 ~/.config/sage/qwen38-api-key
 ~/.config/opencode/opencode.jsonc
+~/.config/opencode/tui.json
 ~/.config/opencode/agents/sage-qwen.md
-~/.config/opencode/cli.json
 ```
 
-密钥文件仅允许当前用户读写。OpenCode 配置中只有密钥文件的路径，不含密钥
+密钥文件仅允许当前用户读写。OpenCode 配置中只有密钥文件引用，不含密钥
 本身。原有配置的备份位于：
 
 ```text
@@ -143,8 +139,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### 能回答问题，但调用工具时报 stream 错误
 
-重新运行 `./install.sh`。脚本会重新安装锁定版本并应用兼容修正。不要单独升级
-OpenCode 或 `@opencode/ai`。
+拉取最新版并重新运行 `./install.sh`。不要单独升级 OpenCode 或 provider
+运行时；这两个版本与 SAGE 兼容适配器是一起验证的。
 
 ### Node.js 下载失败
 
@@ -153,35 +149,24 @@ OpenCode 或 `@opencode/ai`。
 
 ### `EMFILE: too many open files, watch ...`
 
-先拉取最新版并重新安装：
+旧版配置曾保留一个无法关闭的 TUI 目录监听。请更新并重新安装：
 
 ```bash
 git pull
 ./install.sh
-```
-
-新版会在 Linux 启动器中设置 OpenCode V2 `2.0.20` 实际读取的
-`OPENCODE_FILEWATCHER_DISABLE=1`，并停止可能仍在运行的旧后台服务，不需要修改
-整台服务器的 `sysctl`。安装后可检查：
-
-```bash
-opencode --sage-opencode-doctor
-```
-
-输出中的 `launcher` 应指向当前用户的 `.local/bin/opencode`，并包含
-`filewatcher_disable=1`。若普通的 `opencode` 仍命中其他安装，可先使用绝对
-路径：
-
-```bash
 ~/.local/bin/opencode --sage-opencode-doctor
-~/.local/bin/opencode
 ```
 
-若管理员已经提高 inotify 限额，希望恢复实时文件监视，可运行：
+Linux 上的诊断输出应包含：
 
-```bash
-OPENCODE_FILEWATCHER_DISABLE=false opencode
+```text
+filewatcher_disable=true
+tui_config_watcher=absent-in-opencode-1.18.33
 ```
+
+这条修复不要求普通同学修改 `sysctl`，也不需要管理员权限。若普通的
+`opencode` 仍命中另一份旧安装，请使用 `~/.local/bin/opencode`，并把
+`command -v opencode` 和上述 doctor 输出发给助教。
 
 ### npm 提示没有权限
 
@@ -190,19 +175,19 @@ OPENCODE_FILEWATCHER_DISABLE=false opencode
 
 ### 切换回其他模型
 
-在 OpenCode 里按 Tab 选择其他主 Agent，并在 `/models` 中选择其他已经配置的
-模型。切换只影响当前会话，不会改写配置；如果希望永久更换默认项，可编辑
-`~/.config/opencode/opencode.jsonc` 中的 `default_agent` 和 `model`。安装前的原始
-配置也保存在备份目录中。
+在 OpenCode 中选择其他已配置的 Agent 和模型即可。若希望永久更换默认项，可
+编辑 `~/.config/opencode/opencode.jsonc` 中的 `default_agent` 和 `model`；安装前
+的原始配置也保存在备份目录中。
 
 ## 安全排障信息
 
 以下命令不会打印 API Key，可以把输出发给助教：
 
 ```bash
+command -v opencode
 opencode --version
+opencode --sage-opencode-doctor
 opencode debug paths
-opencode debug agents
 ls -l ~/.config/sage/qwen38-api-key
 ```
 

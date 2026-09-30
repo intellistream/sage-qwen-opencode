@@ -17,14 +17,14 @@ cat > "$fake_home/.config/opencode/opencode.jsonc" <<'EOF'
 {
   // Existing user setting must survive the merge.
   "theme": "system",
-  "providers": {
-    "kept-provider": { "name": "keep me" },
+  "provider": {
+    "kept-provider": { "name": "keep me", "npm": "@ai-sdk/openai-compatible" },
   },
 }
 EOF
-cat > "$fake_home/.config/opencode/cli.json" <<'EOF'
+cat > "$fake_home/.config/opencode/tui.json" <<'EOF'
 {
-  "theme": { "mode": "dark" }
+  "theme": "dark"
 }
 EOF
 cat > "$fake_home/.bashrc" <<'EOF'
@@ -45,28 +45,20 @@ while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--prefix" ]]; then prefix="$2"; shift 2; else shift; fi
 done
 [[ -n "$prefix" ]]
-runtime="$prefix/lib/node_modules/@opencode/ai"
-cli="$prefix/lib/node_modules/@opencode/cli/bin/opencode.exe"
-mkdir -p "$runtime/dist/providers" "$runtime/dist/protocols" "$prefix/bin" "$(dirname "$cli")"
-: > "$runtime/dist/providers/openai-compatible-responses.js"
-{
-  printf '%s\n' 'namespace: Schema.optional(Schema.String),'
-  printf '%s\n' 'namespace: Schema.optional(Schema.String),'
-  for _ in 1 2 3 4; do printf '%s\n' 'namespace: item.namespace,'; done
-} > "$runtime/dist/protocols/open-responses.js"
+cli="$prefix/lib/node_modules/opencode-ai/bin/opencode.exe"
+mkdir -p "$prefix/lib/node_modules/@ai-sdk/openai" "$prefix/bin" "$(dirname "$cli")"
 cat > "$cli" <<'OPENCODE'
 #!/usr/bin/env bash
 if [[ "${1:-}" == --version ]]; then
-  printf '%s\n' 'opencode v2.0.20 fixture'
+  printf '%s\n' '1.18.33 fixture'
 elif [[ "${1:-}" == --watcher-env ]]; then
-  printf '%s\n' "${OPENCODE_FILEWATCHER_DISABLE:-${OPENCODE_DISABLE_FILEWATCHER:-unset}}"
+  printf '%s\n' "${OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER:-unset}"
 else
   printf '%s\n' 'OpenCode fixture'
 fi
 OPENCODE
 chmod +x "$cli"
-ln -s "../lib/node_modules/@opencode/cli/bin/opencode.exe" "$prefix/bin/opencode"
-ln -s "../lib/node_modules/@opencode/cli/bin/opencode.exe" "$prefix/bin/opencode2"
+ln -s "../lib/node_modules/opencode-ai/bin/opencode.exe" "$prefix/bin/opencode"
 EOF
 chmod +x "$fake_bin/npm"
 
@@ -140,10 +132,10 @@ node --input-type=module - "$fake_home/.config/opencode/opencode.jsonc" <<'NODE'
 import fs from "node:fs";
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (config.theme !== "system") throw new Error("existing setting was lost");
-if (config.providers?.["kept-provider"]?.name !== "keep me") {
+if (config.provider?.["kept-provider"]?.name !== "keep me") {
   throw new Error("existing provider was lost");
 }
-const sage = config.providers?.["sage-qwen38"];
+const sage = config.provider?.["sage-qwen38"];
 if (!sage) throw new Error("SAGE provider is missing");
 if (config.model !== "sage-qwen38/Qwen/Qwen3.8-27B") {
   throw new Error("SAGE is not the default model for new sessions");
@@ -154,33 +146,37 @@ if (config.default_agent !== "sage-qwen") {
 if (sage.models?.["Qwen/Qwen3.8-27B"]?.limit?.context !== 262144) {
   throw new Error("context window is wrong");
 }
-if (sage.models?.["Qwen/Qwen3.8-27B"]?.settings?.reasoningEffort !== "xhigh") {
+if (sage.models?.["Qwen/Qwen3.8-27B"]?.options?.reasoningEffort !== "xhigh") {
   throw new Error("reasoning effort is wrong");
 }
-const variants = sage.models?.["Qwen/Qwen3.8-27B"]?.variants ?? [];
-if (JSON.stringify(variants.map((v) => v.id)) !== JSON.stringify(["low", "medium", "xhigh"])) {
+const variants = sage.models?.["Qwen/Qwen3.8-27B"]?.variants ?? {};
+if (JSON.stringify(Object.keys(variants)) !== JSON.stringify(["low", "medium", "xhigh"])) {
   throw new Error(`reasoning variants are wrong: ${JSON.stringify(variants)}`);
 }
-if (!sage.settings?.apiKey?.includes("qwen38-api-key")) {
+if (!sage.options?.apiKey?.includes("qwen38-api-key")) {
   throw new Error("secret file reference is missing");
 }
+if (!sage.npm?.includes("sage-qwen-provider")) throw new Error("provider adapter is missing");
 NODE
 
-node --input-type=module - "$fake_home/.config/opencode/cli.json" <<'NODE'
+node --input-type=module - "$fake_home/.config/opencode/tui.json" <<'NODE'
 import fs from "node:fs";
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (config.theme?.mode !== "dark") throw new Error("existing CLI setting was lost");
-if (config.keybinds?.["variant.cycle"] !== "shift+tab") {
+if (config.theme !== "dark") throw new Error("existing TUI setting was lost");
+if (config.keybinds?.variant_cycle !== "shift+tab") {
   throw new Error("Shift+Tab variant binding is missing");
 }
-if (config.keybinds?.["agent.cycle"] !== "ctrl+t") {
+if (config.keybinds?.agent_cycle !== "ctrl+t") {
   throw new Error("replacement agent-cycle binding is missing");
+}
+if (config.keybinds?.agent_cycle_reverse !== "none") {
+  throw new Error("Shift+Tab still conflicts with reverse agent cycling");
 }
 NODE
 
-protocol="$prefix/lib/node_modules/@opencode/ai/dist/protocols/open-responses.js"
-[[ "$(grep -Fc 'namespace: Schema.optional(Schema.NullOr(Schema.String)),' "$protocol")" -eq 2 ]]
-[[ "$(grep -Fc 'namespace: item.namespace ?? undefined,' "$protocol")" -eq 4 ]]
+adapter="$prefix/lib/node_modules/@intellistream/sage-qwen-provider/index.mjs"
+grep -Fq 'item.type === "item_reference"' "$adapter"
+grep -Fq 'type: "message", status: "completed"' "$adapter"
 [[ "$(grep -Fc '# >>> sage-opencode path' "$fake_home/.bashrc")" -eq 1 ]]
 grep -Fq 'case "$PATH:" in' "$fake_home/.bashrc"
 grep -Fq 'export KEEP_THIS_SETTING=yes' "$fake_home/.bashrc"
@@ -189,11 +185,14 @@ grep -Fq 'export KEEP_THIS_SETTING=yes' "$fake_home/.bashrc"
 [[ -L "$prefix/bin/node" ]]
 [[ -f "$prefix/bin/opencode" && ! -L "$prefix/bin/opencode" ]]
 grep -Fq '# sage-opencode Linux launcher' "$prefix/bin/opencode"
-grep -Fq 'OPENCODE_FILEWATCHER_DISABLE' "$prefix/bin/opencode"
-[[ "$(env -u OPENCODE_FILEWATCHER_DISABLE -u OPENCODE_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == 1 ]]
-[[ "$(OPENCODE_FILEWATCHER_DISABLE=false "$prefix/bin/opencode" --watcher-env)" == false ]]
-[[ "$(OPENCODE_DISABLE_FILEWATCHER=true "$prefix/bin/opencode" --watcher-env)" == true ]]
+grep -Fq 'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER' "$prefix/bin/opencode"
+grep -Fq 'ulimit -Sn "$target_limit"' "$prefix/bin/opencode"
+[[ "$(env -u OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER "$prefix/bin/opencode" --watcher-env)" == true ]]
+[[ "$(OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=false "$prefix/bin/opencode" --watcher-env)" == false ]]
 doctor_output="$("$prefix/bin/opencode" --sage-opencode-doctor)"
-grep -Fqx 'filewatcher_disable=1' <<<"$doctor_output"
+grep -Fqx 'filewatcher_disable=true' <<<"$doctor_output"
+grep -Fqx 'tui_config_watcher=absent-in-opencode-1.18.33' <<<"$doctor_output"
+grep -Eq '^open_files_soft_limit=[0-9]+$' <<<"$doctor_output"
+grep -Eq '^open_files_hard_limit=([0-9]+|unlimited)$' <<<"$doctor_output"
 
 printf '%s\n' 'install smoke test (including Node bootstrap): PASS'
